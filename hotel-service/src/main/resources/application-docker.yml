@@ -1,0 +1,35 @@
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://hotel-db:5432/hotel}
+    username: ${DB_USER:hotel}
+    password: ${DB_PASSWORD:hotel}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 3000
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  h2:
+    console:
+      enabled: false
+
+eureka:
+  instance:
+    prefer-ip-address: true
+
+management:
+  health:
+    readinessstate:
+      enabled: true
+    livenessstate:
+      enabled: true

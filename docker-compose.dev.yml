@@ -1,0 +1,11 @@
+services:
+  eureka-server:
+    ports: ["8761:8761"]
+  booking-service:
+    ports: ["8081:8081"]
+  hotel-service:
+    ports: ["8082:8082"]
+  booking-db:
+    ports: ["5433:5432"]
+  hotel-db:
+    ports: ["5434:5432"]

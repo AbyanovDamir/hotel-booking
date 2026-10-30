@@ -1,0 +1,19 @@
+services:
+  unit-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      MAVEN_OPTS: -XX:MaxRAMPercentage=75
+
+  smoke-tests:
+    image: curlimages/curl:latest
+    environment:
+      BASE_URL: http://api-gateway:8080
+    volumes:
+      - ./scripts/smoke-test.sh:/tests/smoke-test.sh:ro
+    entrypoint: ["sh", "/tests/smoke-test.sh"]
+    networks: [hotel-network]
+    depends_on:
+      api-gateway:
+        condition: service_healthy
