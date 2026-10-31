@@ -274,8 +274,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 volumes этого Compose-проекта. Данные обеих PostgreSQL будут удалены:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-  -f docker-compose.test.yml down --volumes --rmi local --remove-orphans
+docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.test.yml down --volumes --rmi local --remove-orphans
 ```
 
 Для повторной сборки с нуля выполните шаги 3–5. Не используйте
