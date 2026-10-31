@@ -5,7 +5,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$PROJECT_DIR"
 
 MODE=${1:-all}
-COMPOSE="docker compose -f docker-compose.yml -f docker-compose.test.yml"
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.test.yml"
 
 run_unit_tests() {
   echo "=== Maven tests inside container ==="

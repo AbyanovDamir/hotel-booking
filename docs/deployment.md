@@ -3,6 +3,8 @@
 Требования: Linux VM, 2 vCPU, 4 ГБ RAM, 15 ГБ диска, Docker Compose и `curl`.
 
 ```bash
+git clone https://github.com/AbyanovDamir/hotel-booking.git
+cd hotel-booking
 cp .env.example .env
 # Замените все секреты и пароли.
 chmod +x scripts/*.sh

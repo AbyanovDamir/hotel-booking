@@ -167,112 +167,133 @@ hotel-booking/
 В контейнерной схеме наружу по умолчанию открыт только API Gateway. Booking Service
 и Hotel Service владеют разными БД и не обращаются к таблицам друг друга.
 
-## Запуск тестов
+## Пошаговый запуск на Linux в Docker
 
-Из корневой папки проекта выполните полный набор тестов всех сервисов:
+Ниже приведён полный сценарий с чистой Linux VM. JDK и Maven на хосте не нужны:
+сборка и тесты выполняются внутри контейнеров.
 
-```bash
-mvn test
-```
-
-Успешный прогон завершается сообщением `BUILD SUCCESS`. В проекте выполняются
-34 unit-, MockMvc/security- и интеграционных H2/JPA-теста.
-
-Запуск тестов отдельного сервиса вместе с необходимыми зависимыми модулями:
+### Шаг 1. Клонирование репозитория
 
 ```bash
-mvn -pl booking-service -am test
-mvn -pl hotel-service -am test
-mvn -pl api-gateway -am test
-mvn -pl eureka-server -am test
+git clone https://github.com/AbyanovDamir/hotel-booking.git
+cd hotel-booking
 ```
 
-Запуск одного тестового класса:
-
-```bash
-mvn -pl booking-service -Dtest=BookingServiceImplTest test
-mvn -pl hotel-service -Dtest=RoomAvailabilityIntegrationTest test
-```
-
-Подробное описание проверяемых сценариев находится в
-[docs/testing.md](docs/testing.md).
-
-### Тесты полностью внутри Docker
-
-На Linux-хосте не нужны JDK и Maven — только Docker Compose:
-
-```bash
-chmod +x scripts/*.sh
-./scripts/container-test.sh unit
-```
-
-Полный прогон: Maven-тесты, запуск PostgreSQL и микросервисов, затем API smoke-тест
-из отдельного curl-контейнера:
-
-```bash
-./scripts/container-test.sh all
-# эквивалентно: make test-e2e
-```
-
-Режим `smoke` проверяет JWT, рекомендации, идемпотентное бронирование и историю.
-
-## Сборка
-
-После успешного выполнения тестов соберите все модули:
-
-```bash
-mvn package
-```
-
-Исполняемые JAR имеют суффикс `-exec.jar`. Обычные JAR оставлены отдельно, чтобы
-упаковка была надёжной и воспроизводимой на Windows.
-
-## Запуск на Linux в Docker
+### Шаг 2. Настройка окружения
 
 ```bash
 cp .env.example .env
-# Укажите собственные секреты и пароли БД.
 chmod +x scripts/*.sh
-./scripts/docker-start.sh
 ```
+
+Откройте `.env` и замените `JWT_SECRET`, `INTERNAL_API_KEY`,
+`BOOKING_DB_PASSWORD` и `HOTEL_DB_PASSWORD`. Значения из примера нельзя использовать
+на публичном сервере.
+
+### Шаг 3. Сборка Docker-образов
 
 ```bash
-make status
-make logs
-make smoke
-make down
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 ```
 
-`down` не удаляет PostgreSQL volumes.
+Multi-stage Dockerfile самостоятельно собирают executable JAR. Результат сборки
+должен завершиться без ошибок для Eureka, Gateway, Booking и Hotel Service.
 
-## Локальный запуск без Docker
-
-Локально на Windows:
-
-```powershell
-./start-all.ps1
-```
-
-Linux/macOS:
+### Шаг 4. Запуск контейнеров
 
 ```bash
-chmod +x start-all.sh
-./start-all.sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
-Контейнеры собираются multi-stage Dockerfile, поэтому предварительный `mvn package`
-не нужен. Базовый `docker compose up -d --build` публикует только Gateway; скрипт
-запуска подключает dev-overlay с диагностическими портами.
+Проверка состояния:
 
-Порядок ручного запуска: Eureka → Hotel → Booking → Gateway. После старта доступны:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
+curl http://localhost:8080/actuator/health
+```
+
+Дождитесь состояния `healthy`. Порядок старта задаётся health checks:
+PostgreSQL → Eureka → Hotel → Booking → Gateway.
+
+После запуска доступны:
 
 - Gateway: `http://localhost:8080`;
 - Eureka: `http://localhost:8761`;
 - Swagger Booking: `http://localhost:8081/swagger-ui/index.html`;
-- Swagger Hotel: `http://localhost:8082/swagger-ui/index.html`.
+- Swagger Hotel: `http://localhost:8082/swagger-ui/index.html`;
+- Booking PostgreSQL: `localhost:5433`;
+- Hotel PostgreSQL: `localhost:5434`.
 
-Демонстрационные учётные записи: `user/user` (USER), `admin/admin` (ADMIN).
-Секреты `JWT_SECRET` и `INTERNAL_API_KEY` необходимо переопределять вне локальной среды.
+Демонстрационные учётные записи: `user/user` и `admin/admin`.
+
+### Шаг 5. Тестирование
+
+Все 34 Maven-теста внутри отдельного контейнера:
+
+```bash
+./scripts/container-test.sh unit
+```
+
+Smoke-тест работающего API внутри curl-контейнера:
+
+```bash
+./scripts/container-test.sh smoke
+```
+
+Полный сценарий — сборка тестового образа, 34 теста, запуск стенда и проверка API:
+
+```bash
+./scripts/container-test.sh all
+# или
+make test-e2e
+```
+
+Успешный результат содержит `BUILD SUCCESS` и `All smoke tests passed`. Подробное
+описание сценариев: [docs/testing.md](docs/testing.md).
+
+### Шаг 6. Просмотр логов
+
+```bash
+./scripts/docker-logs.sh
+# только один сервис:
+./scripts/docker-logs.sh booking-service
+```
+
+### Шаг 7. Остановка
+
+Остановка контейнеров с сохранением PostgreSQL volumes:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  -f docker-compose.test.yml down --remove-orphans
+```
+
+### Шаг 8. Полная очистка проекта
+
+Следующая команда удаляет только контейнеры, локально собранные образы, сеть и
+volumes этого Compose-проекта. Данные обеих PostgreSQL будут удалены:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  -f docker-compose.test.yml down --volumes --rmi local --remove-orphans
+```
+
+Для повторной сборки с нуля выполните шаги 3–5. Не используйте
+`docker system prune -a`, если на машине работают другие Docker-проекты.
+
+## Локальный запуск без Docker
+
+```powershell
+# Windows
+./start-all.ps1
+```
+
+```bash
+# Linux/macOS с установленными JDK и Maven
+chmod +x start-all.sh
+./start-all.sh
+mvn test
+```
 
 ## Быстрая проверка API
 
