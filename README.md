@@ -184,6 +184,24 @@ cd hotel-booking
 ```bash
 cp .env.example .env
 chmod +x scripts/*.sh
+
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+  "ipv6": false,
+  "dns": ["8.8.8.8", "1.1.1.1"],
+  "mtu": 1300
+}
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+# Проверить содержимое файла
+cat /etc/docker/daemon.json
+
+# Проверить, что Docker увидел DNS и MTU
+docker info | grep -iE "dns|mtu|ipv6"
+
 ```
 
 Откройте `.env` и замените `JWT_SECRET`, `INTERNAL_API_KEY`,
