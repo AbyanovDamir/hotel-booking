@@ -35,6 +35,31 @@ class InternalKeyFilterTest {
     }
 
     @Test
+    @DisplayName("внутренний ключ разрешает Booking Service получить рекомендации")
+    void authenticatesRecommendationRequest() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/rooms/recommend");
+        request.addHeader("X-Internal-Key", "expected-key");
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> { });
+
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(authentication).isNotNull();
+        assertThat(authentication.getAuthorities()).extracting("authority")
+                .containsExactly("ROLE_INTERNAL");
+    }
+
+    @Test
+    @DisplayName("внутренний ключ не даёт доступ к административным API")
+    void doesNotAuthenticateUnlistedApi() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/hotels");
+        request.addHeader("X-Internal-Key", "expected-key");
+
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> { });
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
     @DisplayName("неверный внутренний ключ не создаёт аутентификацию")
     void ignoresInvalidInternalKey() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/internal/rooms/1/confirm");

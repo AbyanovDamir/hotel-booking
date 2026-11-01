@@ -1,6 +1,7 @@
 package com.example.booking.service;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import com.example.booking.client.HotelClientFacade;
 import com.example.booking.dto.*;
@@ -46,7 +47,7 @@ public class BookingServiceImpl implements BookingService {
                     .orElseThrow(() -> new ConflictException("No rooms available for the selected dates"));
         }
 
-        Instant now = Instant.now();
+        Instant now = currentTimestamp();
         Booking booking = bookings.save(Booking.builder().user(user).roomId(roomId)
                 .startDate(request.startDate()).endDate(request.endDate()).status(BookingStatus.PENDING)
                 .requestId(requestId).createdAt(now).updatedAt(now).build());
@@ -93,8 +94,12 @@ public class BookingServiceImpl implements BookingService {
 
     private void transition(Booking booking, BookingStatus target) {
         booking.setStatus(target);
-        booking.setUpdatedAt(Instant.now());
+        booking.setUpdatedAt(currentTimestamp());
         bookings.save(booking);
+    }
+
+    private Instant currentTimestamp() {
+        return Instant.now().truncatedTo(ChronoUnit.MICROS);
     }
 
     private void compensate(Long roomId, String requestId) {

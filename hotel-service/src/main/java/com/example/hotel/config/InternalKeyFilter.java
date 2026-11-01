@@ -19,8 +19,10 @@ public class InternalKeyFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        if (request.getRequestURI().startsWith("/internal/")
-                && expectedKey.equals(request.getHeader("X-Internal-Key"))) {
+        String requestUri = request.getRequestURI();
+        boolean serviceEndpoint = requestUri.startsWith("/internal/")
+                || requestUri.equals("/api/rooms/recommend");
+        if (serviceEndpoint && expectedKey.equals(request.getHeader("X-Internal-Key"))) {
             var authentication = new UsernamePasswordAuthenticationToken("booking-service", null,
                     List.of(new SimpleGrantedAuthority("ROLE_INTERNAL")));
             SecurityContextHolder.getContext().setAuthentication(authentication);

@@ -274,7 +274,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 volumes этого Compose-проекта. Данные обеих PostgreSQL будут удалены:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.test.yml down --volumes --rmi local --remove-orphans
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  -f docker-compose.test.yml down --volumes --rmi local --remove-orphans
 ```
 
 Для повторной сборки с нуля выполните шаги 3–5. Не используйте
@@ -294,39 +295,228 @@ chmod +x start-all.sh
 mvn test
 ```
 
-## Быстрая проверка API
+## Ручное тестирование API
 
-Получить токен:
+Команды ниже выполняются в Linux/VM после запуска стенда из шага 4. Для прямого
+доступа к Eureka, Swagger и PostgreSQL обязательно используйте также
+`docker-compose.dev.yml`, который публикует служебные порты на `localhost`.
+
+### 1. Подготовка переменных
+
+Переменные достаточно задать один раз в текущем терминале:
 
 ```bash
-curl -s http://localhost:8080/api/auth/token \
+export GATEWAY="http://localhost:8080"
+export EUREKA="http://localhost:8761"
+export BOOKING_SWAGGER="http://localhost:8081/swagger-ui/index.html"
+export HOTEL_SWAGGER="http://localhost:8082/swagger-ui/index.html"
+
+export USER_NAME="user"
+export USER_PASS="user"
+export ADMIN_NAME="admin"
+export ADMIN_PASS="admin"
+```
+
+Универсальная функция получения JWT:
+
+```bash
+get_token() {
+  local username=$1
+  local password=$2
+  curl -sf "$GATEWAY/api/auth/token" \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$username\",\"password\":\"$password\"}" \
+    | grep -o '"token":"[^"]*"' | cut -d'"' -f4
+}
+
+export USER_TOKEN=$(get_token "$USER_NAME" "$USER_PASS")
+export ADMIN_TOKEN=$(get_token "$ADMIN_NAME" "$ADMIN_PASS")
+
+test -n "$USER_TOKEN" && echo "USER token: OK"
+test -n "$ADMIN_TOKEN" && echo "ADMIN token: OK"
+```
+
+### 2. Проверка инфраструктуры
+
+```bash
+# Состояние контейнеров: все прикладные сервисы должны быть healthy
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
+
+# Gateway health: ожидается HTTP 200 и status=UP
+curl -i "$GATEWAY/actuator/health"
+
+# Зарегистрированные в Eureka приложения
+curl -s "$EUREKA/eureka/apps" -H 'Accept: application/json' \
+  | grep -o '"name":"[^"]*"'
+```
+
+Ожидаются приложения `EUREKA-SERVER`, `HOTEL-SERVICE`, `BOOKING-SERVICE` и
+`API-GATEWAY`.
+
+### 3. Регистрация, авторизация и защита маршрутов
+
+```bash
+NEW_USER="testuser_$(date +%s)"
+
+# Регистрация: ожидается HTTP 201
+curl -i -X POST "$GATEWAY/api/auth/register" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"user","password":"user"}'
+  -d "{\"username\":\"$NEW_USER\",\"password\":\"pass123\"}"
+
+NEW_TOKEN=$(get_token "$NEW_USER" 'pass123')
+test -n "$NEW_TOKEN" && echo "New user token: OK"
+
+# История нового пользователя: ожидается HTTP 200 и пустой content
+curl -i "$GATEWAY/api/bookings?page=0&size=10&sort=createdAt,desc" \
+  -H "Authorization: Bearer $NEW_TOKEN"
+
+# Без JWT: ожидается HTTP 401
+curl -s -o /dev/null -w 'Unauthorized: HTTP %{http_code}\n' \
+  "$GATEWAY/api/bookings"
 ```
 
-Рекомендации на даты (токен подставить вместо `$TOKEN`):
+### 4. Каталог отелей и номеров
 
 ```bash
-curl 'http://localhost:8080/api/rooms/recommend?startDate=2099-01-10&endDate=2099-01-12' \
-  -H "Authorization: Bearer $TOKEN"
+curl -i "$GATEWAY/api/hotels" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl -i "$GATEWAY/api/rooms?available=true" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+curl -i "$GATEWAY/api/rooms/recommend?startDate=2099-01-10&endDate=2099-01-12" \
+  -H "Authorization: Bearer $USER_TOKEN"
+
+# Начальные данные содержат отель id=1
+curl -i "$GATEWAY/api/hotels/1/stats" \
+  -H "Authorization: Bearer $USER_TOKEN"
 ```
 
-Автоматический выбор и идемпотентное бронирование:
+Все четыре запроса должны вернуть HTTP 200.
+
+### 5. Создание брони и проверка идемпотентности
 
 ```bash
-curl -i http://localhost:8080/api/bookings \
-  -H "Authorization: Bearer $TOKEN" \
+IDEM_KEY="manual-$(date +%s)"
+BOOKING_BODY='{"autoSelect":true,"startDate":"2099-01-10","endDate":"2099-01-12"}'
+
+FIRST_BOOKING=$(curl -sf -X POST "$GATEWAY/api/bookings" \
+  -H "Authorization: Bearer $USER_TOKEN" \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: demo-001' \
-  -d '{"autoSelect":true,"startDate":"2099-01-10","endDate":"2099-01-12"}'
+  -H "Idempotency-Key: $IDEM_KEY" \
+  -d "$BOOKING_BODY")
+echo "$FIRST_BOOKING"
+
+SECOND_BOOKING=$(curl -sf -X POST "$GATEWAY/api/bookings" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $IDEM_KEY" \
+  -d "$BOOKING_BODY")
+
+test "$FIRST_BOOKING" = "$SECOND_BOOKING" \
+  && echo 'Idempotency: OK' \
+  || echo 'Idempotency: FAIL'
 ```
 
-Повтор той же команды возвращает исходную бронь и не увеличивает `timesBooked`.
+Оба запроса должны вернуть одну и ту же бронь; повтор не должен увеличивать
+`timesBooked`.
+
+### 6. История и отмена брони
 
 ```bash
-curl 'http://localhost:8080/api/bookings?page=0&size=20&sort=createdAt,desc' \
-  -H "Authorization: Bearer $TOKEN"
+BOOKINGS=$(curl -sf \
+  "$GATEWAY/api/bookings?page=0&size=10&sort=createdAt,desc" \
+  -H "Authorization: Bearer $USER_TOKEN")
+echo "$BOOKINGS"
+
+BOOKING_ID=$(echo "$BOOKINGS" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+echo "Booking ID: $BOOKING_ID"
+
+if [ -n "$BOOKING_ID" ]; then
+  curl -i -X DELETE "$GATEWAY/api/bookings/$BOOKING_ID" \
+    -H "Authorization: Bearer $USER_TOKEN"
+fi
 ```
+
+Удаление должно вернуть HTTP 204, а статус брони при следующем чтении —
+`CANCELLED`.
+
+### 7. Проверка роли ADMIN
+
+```bash
+# ADMIN: ожидается HTTP 201
+curl -i -X POST "$GATEWAY/api/hotels" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Manual Test Hotel","city":"Moscow","address":"Test Street 1"}'
+
+# USER: ожидается HTTP 403
+curl -s -o /dev/null -w 'USER create hotel: HTTP %{http_code}\n' \
+  -X POST "$GATEWAY/api/hotels" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Forbidden Hotel","city":"Moscow","address":"X"}'
+```
+
+### 8. Защита внутренних эндпоинтов
+
+```bash
+# Прямой вызов без X-Internal-Key: ожидается HTTP 401 или 403
+curl -s -o /dev/null -w 'Direct internal: HTTP %{http_code}\n' -X POST \
+  'http://localhost:8082/internal/rooms/1/confirm-availability' \
+  -H 'Content-Type: application/json' \
+  -d '{"requestId":"manual","startDate":"2099-01-10","endDate":"2099-01-12"}'
+
+# Через Gateway внутренний маршрут не опубликован: ожидается HTTP 404
+curl -s -o /dev/null -w 'Internal via Gateway: HTTP %{http_code}\n' -X POST \
+  "$GATEWAY/internal/rooms/1/confirm-availability" \
+  -H 'Content-Type: application/json' \
+  -d '{"requestId":"manual","startDate":"2099-01-10","endDate":"2099-01-12"}'
+```
+
+### 9. Swagger/OpenAPI
+
+Интерактивная документация открывается в браузере:
+
+- Booking: `http://localhost:8081/swagger-ui/index.html`;
+- Hotel: `http://localhost:8082/swagger-ui/index.html`.
+
+Проверка спецификаций из терминала:
+
+```bash
+curl -s -o /dev/null -w 'Booking OpenAPI: HTTP %{http_code}\n' \
+  http://localhost:8081/v3/api-docs
+curl -s -o /dev/null -w 'Hotel OpenAPI: HTTP %{http_code}\n' \
+  http://localhost:8082/v3/api-docs
+```
+
+Оба запроса должны вернуть HTTP 200.
+
+### 10. Проверка PostgreSQL
+
+```bash
+COMPOSE='docker compose -f docker-compose.yml -f docker-compose.dev.yml'
+
+$COMPOSE exec -T booking-db psql -U booking -d booking -c '\dt'
+$COMPOSE exec -T booking-db psql -U booking -d booking \
+  -c 'SELECT id, status, start_date, end_date, created_at FROM bookings ORDER BY created_at DESC LIMIT 5;'
+
+$COMPOSE exec -T hotel-db psql -U hotel -d hotel -c '\dt'
+$COMPOSE exec -T hotel-db psql -U hotel -d hotel \
+  -c 'SELECT * FROM room_reservations ORDER BY id DESC LIMIT 5;'
+```
+
+### 11. Автоматическая сверка ручного сценария
+
+Тот же основной пользовательский путь можно проверить одной командой в
+изолированном curl-контейнере:
+
+```bash
+./scripts/container-test.sh smoke
+```
+
+Успешное завершение содержит `All smoke tests passed`. После проверки остановите
+стенд командой из шага 7 раздела запуска.
 
 ## Публичные маршруты Gateway
 
