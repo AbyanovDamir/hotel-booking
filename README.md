@@ -190,9 +190,19 @@ chmod +x scripts/*.sh
 `BOOKING_DB_PASSWORD` и `HOTEL_DB_PASSWORD`. Значения из примера нельзя использовать
 на публичном сервере.
 
-### Шаг 3. Сборка Docker-образов
+### Шаг 3. Скачивание и сборка Docker-образов
 
 ```bash
+
+# Скачать Maven-образ через GitVerse
+docker pull dh-mirror.gitverse.ru/library/maven:3.9-eclipse-temurin-17
+
+# Переименовать в стандартное имя
+docker tag dh-mirror.gitverse.ru/library/maven:3.9-eclipse-temurin-17 maven:3.9-eclipse-temurin-17
+#Аналогичным образом можно загрузить и JRE-образ (если вы ещё не переименовали его):
+docker pull dh-mirror.gitverse.ru/library/eclipse-temurin:17-jre-alpine
+docker tag dh-mirror.gitverse.ru/library/eclipse-temurin:17-jre-alpine eclipse-temurin:17-jre-alpine
+
 docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 ```
 
